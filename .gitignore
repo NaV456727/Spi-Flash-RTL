@@ -1,0 +1,15 @@
+# ModelSim generated files
+work/
+*.wlf
+*.wlf.*
+transcript
+*.log
+
+# Temporary files
+*.bak
+*.tmp
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
