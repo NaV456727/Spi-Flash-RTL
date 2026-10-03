@@ -12,6 +12,10 @@ module spi_flash_tb;
     reg [7:0] received_data3;
     reg [7:0] received_data4;
 
+    reg [7:0] jedec_manufacturer;
+    reg [7:0] jedec_memory_type;
+    reg [7:0] jedec_device_id;
+
     reg [7:0] received_status;
 
 
@@ -93,6 +97,10 @@ module spi_flash_tb;
         received_data3 = 0;
         received_data4 = 0;
 
+        jedec_manufacturer = 0;
+        jedec_memory_type = 0;
+        jedec_device_id = 0;
+
 
         #10;
 
@@ -157,6 +165,26 @@ module spi_flash_tb;
         cs = 1;
 
         #10;
+
+        // 4. READ JEDEC ID
+        cs = 0;
+
+        send_byte(8'h9F);
+
+        read_byte(jedec_manufacturer);
+        read_byte(jedec_memory_type);
+        read_byte(jedec_device_id);
+
+        cs = 1;
+        #10;
+
+        $display("--------------------------------");
+        $display("JEDEC ID TEST");
+        $display("--------------------------------");
+        $display("Manufacturer ID = %h", jedec_manufacturer);
+        $display("Memory Type     = %h", jedec_memory_type);
+        $display("Device ID       = %h", jedec_device_id);
+        $display("--------------------------------");
 
 
         // =========================================

@@ -14,6 +14,12 @@ module spi_flash (
     reg [2:0] bit_count;
 
     // ---------------------------------------
+    // JEDEC ID shift register
+    // ---------------------------------------
+
+    reg [23:0] jedec_shift;
+
+    // ---------------------------------------
     // Flash registers
     // ---------------------------------------
 
@@ -53,6 +59,7 @@ module spi_flash (
     parameter PROGRAM_STATE = 3'b011;
     parameter READ_STATE    = 3'b100;
     parameter DATA_STATE    = 3'b101;
+    parameter JEDEC_STATE   = 3'b110;
 
     reg [2:0] state;
 
@@ -75,6 +82,8 @@ module spi_flash (
 
         status_shift   = 8'b0;
         read_shift     = 8'b0;
+
+        jedec_shift = 24'b0;
 
         read_pending   = 1'b0;
         read_address   = 16'b0;
@@ -180,6 +189,14 @@ module spi_flash (
                                 state <= STATUS_STATE;
 
                             end
+
+                            // -----------------------------
+                            // JEDEC ID
+                            // -----------------------------
+                                8'h9F: begin
+                                    jedec_shift <= 24'hEF4017;
+                                    state <= JEDEC_STATE;
+                                end
 
 
                             // -----------------------------
@@ -351,63 +368,77 @@ module spi_flash (
 
             end
 
+            // -------------------------------------------
+            // JEDEC ID output
+            // -------------------------------------------
+
+            else if (state == JEDEC_STATE) begin
+
+                miso <= jedec_shift[23];
+
+                jedec_shift <= {
+                    jedec_shift[22:0],
+                    1'b0
+                };
+
+            end
 
             // -------------------------------------------
             // Flash Read output
             // -------------------------------------------
 
-           // Flash Read output
-else if (state == READ_STATE) begin
+            // Flash Read output
+            else if (state == READ_STATE) begin
 
-    // Load first bit of a new byte
-    if (read_pending) begin
+                // Load first bit of a new byte
+                if (read_pending) begin
 
-        miso <= memory[read_address][7];
+                    miso <= memory[read_address][7];
 
-        // Shift immediately so next falling edge
-        // outputs the next bit
-        read_shift <= {
-            memory[read_address][6:0],
-            1'b0
-        };
+                    // Shift immediately so next falling edge
+                    // outputs the next bit
+                    read_shift <= {
+                        memory[read_address][6:0],
+                        1'b0
+                    };
 
-        read_pending <= 1'b0;
+                    read_pending <= 1'b0;
 
-        read_bit_count <= 3'd1;
+                    read_bit_count <= 3'd1;
 
-    end
+                end
 
-    else begin
+                else begin
 
-        // Output next bit
-        miso <= read_shift[7];
+                    // Output next bit
+                    miso <= read_shift[7];
 
-        // Shift to next bit
-        read_shift <= {
-            read_shift[6:0],
-            1'b0
-        };
+                    // Shift to next bit
+                    read_shift <= {
+                        read_shift[6:0],
+                        1'b0
+                    };
 
-        if (read_bit_count == 3'd7) begin
+                    if (read_bit_count == 3'd7) begin
 
-            // Finished current byte
-            read_address <= read_address + 1'b1;
+                        // Finished current byte
+                        read_address <= read_address + 1'b1;
 
-            read_bit_count <= 3'b0;
+                        read_bit_count <= 3'b0;
 
-            // Next falling edge will load next byte
-            read_pending <= 1'b1;
+                        // Next falling edge will load next byte
+                        read_pending <= 1'b1;
 
-        end
-        else begin
+                    end
+                    else begin
 
-            read_bit_count <=
-                read_bit_count + 1'b1;
+                        read_bit_count <=
+                            read_bit_count + 1'b1;
 
-        end
+                    end
 
-    end
-end
+                end
+            end
 
 
             else begin
