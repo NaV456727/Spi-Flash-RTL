@@ -164,6 +164,17 @@ module spi_flash (
 
             end
 
+
+            // -------------------------------------------
+            // Chip Erase
+            // -------------------------------------------
+
+            if (command == 8'hC7 && wel == 1'b1) begin
+
+                busy <= 1'b1;
+
+            end
+
             state <= CMD_STATE;
 
         end
@@ -395,6 +406,27 @@ module spi_flash (
 
 
                             // -----------------------------
+                            // Chip Erase
+                            // -----------------------------
+
+                            8'hC7: begin
+
+                                if ((wel == 1'b1) &&
+                                    (busy == 1'b0)) begin
+
+                                    state <= DATA_STATE;
+
+                                end
+                                else begin
+
+                                    state <= DATA_STATE;
+
+                                end
+
+                            end
+
+
+                            // -----------------------------
                             // Unsupported command
                             // -----------------------------
 
@@ -579,6 +611,7 @@ module spi_flash (
     // Sector Erase : 200 ns
     // Block Erase  : 300 ns
     // 64 KB Erase  : 400 ns
+    // Chip Erase   : 500 ns
     //
     // These values are simulation values and are not
     // intended to represent exact physical timing.
@@ -653,6 +686,27 @@ module spi_flash (
             else if (command == 8'hD8) begin
 
                 #400;
+
+                // Erase entire 64 KB behavioral memory
+                for (j = 0; j < 65536; j = j + 1) begin
+
+                    memory[j] = 8'hFF;
+
+                end
+
+                busy = 1'b0;
+                wel  = 1'b0;
+
+            end
+
+
+            // -------------------------------------------
+            // Chip Erase
+            // -------------------------------------------
+
+            else if (command == 8'hC7) begin
+
+                #500;
 
                 // Erase entire 64 KB behavioral memory
                 for (j = 0; j < 65536; j = j + 1) begin

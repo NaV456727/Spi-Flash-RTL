@@ -214,11 +214,10 @@ module spi_flash_tb;
 
 
     // =====================================================
-    // 64 KB BLOCK ERASE
+    // CHIP ERASE
     // =====================================================
 
-    task block_erase_64k;
-        input [23:0] address;
+    task chip_erase;
 
         begin
 
@@ -226,11 +225,7 @@ module spi_flash_tb;
 
             cs = 1'b0;
 
-            spi_send_byte(8'hD8);
-
-            spi_send_byte(address[23:16]);
-            spi_send_byte(address[15:8]);
-            spi_send_byte(address[7:0]);
+            spi_send_byte(8'hC7);
 
             cs = 1'b1;
 
@@ -302,7 +297,7 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 1. PROGRAM DATA NEAR START OF MEMORY
+        // 1. PROGRAM START OF MEMORY
         // =================================================
 
         $display("--------------------------------");
@@ -321,11 +316,30 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 2. PROGRAM DATA NEAR END OF MEMORY
+        // 2. PROGRAM MIDDLE OF MEMORY
         // =================================================
 
         $display("--------------------------------");
-        $display("2. PROGRAM END OF MEMORY");
+        $display("2. PROGRAM MIDDLE OF MEMORY");
+        $display("--------------------------------");
+
+        page_program(
+            24'h008010,
+            8'h55,
+            8'h66,
+            8'h77,
+            8'h88
+        );
+
+        #150;
+
+
+        // =================================================
+        // 3. PROGRAM END OF MEMORY
+        // =================================================
+
+        $display("--------------------------------");
+        $display("3. PROGRAM END OF MEMORY");
         $display("--------------------------------");
 
         page_program(
@@ -340,15 +354,15 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 3. VERIFY DATA BEFORE ERASE
+        // 4. VERIFY DATA BEFORE CHIP ERASE
         // =================================================
 
         $display("--------------------------------");
-        $display("3. VERIFY DATA BEFORE ERASE");
+        $display("4. VERIFY DATA BEFORE CHIP ERASE");
         $display("--------------------------------");
 
 
-        // Start of memory
+        // Start
 
         read_data(
             24'h000010,
@@ -359,7 +373,7 @@ module spi_flash_tb;
         );
 
         $display(
-            "Start = %h %h %h %h",
+            "Start  = %h %h %h %h",
             read_data_1,
             read_data_2,
             read_data_3,
@@ -377,7 +391,36 @@ module spi_flash_tb;
             $display("FAIL: Start data incorrect");
 
 
-        // End of memory
+        // Middle
+
+        read_data(
+            24'h008010,
+            read_data_1,
+            read_data_2,
+            read_data_3,
+            read_data_4
+        );
+
+        $display(
+            "Middle = %h %h %h %h",
+            read_data_1,
+            read_data_2,
+            read_data_3,
+            read_data_4
+        );
+
+        if ((read_data_1 == 8'h55) &&
+            (read_data_2 == 8'h66) &&
+            (read_data_3 == 8'h77) &&
+            (read_data_4 == 8'h88))
+
+            $display("PASS: Middle data correct");
+
+        else
+            $display("FAIL: Middle data incorrect");
+
+
+        // End
 
         read_data(
             24'h00FFF0,
@@ -388,7 +431,7 @@ module spi_flash_tb;
         );
 
         $display(
-            "End = %h %h %h %h",
+            "End    = %h %h %h %h",
             read_data_1,
             read_data_2,
             read_data_3,
@@ -407,11 +450,11 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 4. WRITE ENABLE
+        // 5. WRITE ENABLE FOR CHIP ERASE
         // =================================================
 
         $display("--------------------------------");
-        $display("4. WRITE ENABLE FOR 64 KB ERASE");
+        $display("5. WRITE ENABLE FOR CHIP ERASE");
         $display("--------------------------------");
 
         write_enable;
@@ -427,26 +470,22 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 5. 64 KB BLOCK ERASE
+        // 6. CHIP ERASE
         // =================================================
 
         $display("--------------------------------");
-        $display("5. 64 KB BLOCK ERASE");
+        $display("6. CHIP ERASE");
         $display("--------------------------------");
 
-        // Address is supplied as required by the
-        // D8h command. Since our behavioral memory
-        // is exactly 64 KB, the complete memory is erased.
-
-        block_erase_64k(24'h000000);
+        chip_erase;
 
 
         // =================================================
-        // 6. STATUS DURING ERASE
+        // 7. STATUS DURING CHIP ERASE
         // =================================================
 
         $display("--------------------------------");
-        $display("6. STATUS DURING 64 KB ERASE");
+        $display("7. STATUS DURING CHIP ERASE");
         $display("--------------------------------");
 
         #1;
@@ -462,22 +501,22 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 7. WAIT FOR ERASE
+        // 8. WAIT FOR CHIP ERASE
         // =================================================
 
         $display("--------------------------------");
-        $display("7. WAIT FOR 64 KB ERASE");
+        $display("8. WAIT FOR CHIP ERASE");
         $display("--------------------------------");
 
-        #350;
+        #450;
 
 
         // =================================================
-        // 8. STATUS AFTER ERASE
+        // 9. STATUS AFTER CHIP ERASE
         // =================================================
 
         $display("--------------------------------");
-        $display("8. STATUS AFTER 64 KB ERASE");
+        $display("9. STATUS AFTER CHIP ERASE");
         $display("--------------------------------");
 
         read_status(status_after_erase);
@@ -491,11 +530,11 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 9. VERIFY START OF MEMORY ERASED
+        // 10. VERIFY START ERASED
         // =================================================
 
         $display("--------------------------------");
-        $display("9. VERIFY START OF MEMORY ERASED");
+        $display("10. VERIFY START OF MEMORY ERASED");
         $display("--------------------------------");
 
         read_data(
@@ -526,11 +565,46 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 10. VERIFY END OF MEMORY ERASED
+        // 11. VERIFY MIDDLE ERASED
         // =================================================
 
         $display("--------------------------------");
-        $display("10. VERIFY END OF MEMORY ERASED");
+        $display("11. VERIFY MIDDLE OF MEMORY ERASED");
+        $display("--------------------------------");
+
+        read_data(
+            24'h008010,
+            read_data_1,
+            read_data_2,
+            read_data_3,
+            read_data_4
+        );
+
+        $display(
+            "Middle = %h %h %h %h",
+            read_data_1,
+            read_data_2,
+            read_data_3,
+            read_data_4
+        );
+
+        if ((read_data_1 == 8'hFF) &&
+            (read_data_2 == 8'hFF) &&
+            (read_data_3 == 8'hFF) &&
+            (read_data_4 == 8'hFF))
+
+            $display("PASS: Middle of memory erased");
+
+        else
+            $display("FAIL: Middle of memory not erased");
+
+
+        // =================================================
+        // 12. VERIFY END ERASED
+        // =================================================
+
+        $display("--------------------------------");
+        $display("12. VERIFY END OF MEMORY ERASED");
         $display("--------------------------------");
 
         read_data(
@@ -561,11 +635,11 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 11. READ JEDEC ID
+        // 13. READ JEDEC ID
         // =================================================
 
         $display("--------------------------------");
-        $display("11. READ JEDEC ID");
+        $display("13. READ JEDEC ID");
         $display("--------------------------------");
 
         read_jedec_id;
@@ -598,38 +672,13 @@ module spi_flash_tb;
         );
 
         $display(
-            "Memory[0011] = %h",
-            uut.memory[16'h0011]
-        );
-
-        $display(
-            "Memory[0012] = %h",
-            uut.memory[16'h0012]
-        );
-
-        $display(
-            "Memory[0013] = %h",
-            uut.memory[16'h0013]
+            "Memory[8010] = %h",
+            uut.memory[16'h8010]
         );
 
         $display(
             "Memory[FFF0] = %h",
             uut.memory[16'hFFF0]
-        );
-
-        $display(
-            "Memory[FFF1] = %h",
-            uut.memory[16'hFFF1]
-        );
-
-        $display(
-            "Memory[FFF2] = %h",
-            uut.memory[16'hFFF2]
-        );
-
-        $display(
-            "Memory[FFF3] = %h",
-            uut.memory[16'hFFF3]
         );
 
 
@@ -638,7 +687,7 @@ module spi_flash_tb;
         // =================================================
 
         $display("--------------------------------");
-        $display("64 KB BLOCK ERASE TEST COMPLETE");
+        $display("CHIP ERASE TEST COMPLETE");
         $display("--------------------------------");
 
         $stop;
