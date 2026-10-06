@@ -44,7 +44,7 @@ module spi_flash_tb;
 
 
     // =====================================================
-    // SPI send byte
+    // SPI SEND BYTE
     // =====================================================
 
     task spi_send_byte;
@@ -70,7 +70,7 @@ module spi_flash_tb;
 
 
     // =====================================================
-    // SPI receive byte
+    // SPI RECEIVE BYTE
     // =====================================================
 
     task spi_receive_byte;
@@ -93,11 +93,12 @@ module spi_flash_tb;
             end
 
         end
+
     endtask
 
 
     // =====================================================
-    // Read Status Register
+    // READ STATUS REGISTER
     // =====================================================
 
     task read_status;
@@ -120,7 +121,7 @@ module spi_flash_tb;
 
 
     // =====================================================
-    // Write Enable
+    // WRITE ENABLE
     // =====================================================
 
     task write_enable;
@@ -141,7 +142,7 @@ module spi_flash_tb;
 
 
     // =====================================================
-    // Page Program
+    // PAGE PROGRAM
     // =====================================================
 
     task page_program;
@@ -178,7 +179,7 @@ module spi_flash_tb;
 
 
     // =====================================================
-    // Read Data
+    // READ DATA
     // =====================================================
 
     task read_data;
@@ -213,10 +214,10 @@ module spi_flash_tb;
 
 
     // =====================================================
-    // 32 KB Block Erase
+    // 64 KB BLOCK ERASE
     // =====================================================
 
-    task block_erase_32k;
+    task block_erase_64k;
         input [23:0] address;
 
         begin
@@ -225,7 +226,7 @@ module spi_flash_tb;
 
             cs = 1'b0;
 
-            spi_send_byte(8'h52);
+            spi_send_byte(8'hD8);
 
             spi_send_byte(address[23:16]);
             spi_send_byte(address[15:8]);
@@ -301,14 +302,13 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 1. PROGRAM FIRST BLOCK
+        // 1. PROGRAM DATA NEAR START OF MEMORY
         // =================================================
 
         $display("--------------------------------");
-        $display("1. PROGRAM FIRST 32 KB BLOCK");
+        $display("1. PROGRAM START OF MEMORY");
         $display("--------------------------------");
 
-        // Address 000010h
         page_program(
             24'h000010,
             8'h11,
@@ -321,16 +321,15 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 2. PROGRAM SECOND BLOCK
+        // 2. PROGRAM DATA NEAR END OF MEMORY
         // =================================================
 
         $display("--------------------------------");
-        $display("2. PROGRAM SECOND 32 KB BLOCK");
+        $display("2. PROGRAM END OF MEMORY");
         $display("--------------------------------");
 
-        // Address 008010h
         page_program(
-            24'h008010,
+            24'h00FFF0,
             8'hAA,
             8'hBB,
             8'hCC,
@@ -348,7 +347,9 @@ module spi_flash_tb;
         $display("3. VERIFY DATA BEFORE ERASE");
         $display("--------------------------------");
 
-        // First block
+
+        // Start of memory
+
         read_data(
             24'h000010,
             read_data_1,
@@ -358,7 +359,7 @@ module spi_flash_tb;
         );
 
         $display(
-            "First Block = %h %h %h %h",
+            "Start = %h %h %h %h",
             read_data_1,
             read_data_2,
             read_data_3,
@@ -370,15 +371,16 @@ module spi_flash_tb;
             (read_data_3 == 8'h33) &&
             (read_data_4 == 8'h44))
 
-            $display("PASS: First block data correct");
+            $display("PASS: Start data correct");
 
         else
-            $display("FAIL: First block data incorrect");
+            $display("FAIL: Start data incorrect");
 
 
-        // Second block
+        // End of memory
+
         read_data(
-            24'h008010,
+            24'h00FFF0,
             read_data_1,
             read_data_2,
             read_data_3,
@@ -386,7 +388,7 @@ module spi_flash_tb;
         );
 
         $display(
-            "Second Block = %h %h %h %h",
+            "End = %h %h %h %h",
             read_data_1,
             read_data_2,
             read_data_3,
@@ -398,18 +400,18 @@ module spi_flash_tb;
             (read_data_3 == 8'hCC) &&
             (read_data_4 == 8'hDD))
 
-            $display("PASS: Second block data correct");
+            $display("PASS: End data correct");
 
         else
-            $display("FAIL: Second block data incorrect");
+            $display("FAIL: End data incorrect");
 
 
         // =================================================
-        // 4. STATUS AFTER WREN
+        // 4. WRITE ENABLE
         // =================================================
 
         $display("--------------------------------");
-        $display("4. WRITE ENABLE FOR BLOCK ERASE");
+        $display("4. WRITE ENABLE FOR 64 KB ERASE");
         $display("--------------------------------");
 
         write_enable;
@@ -425,15 +427,18 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 5. 32 KB BLOCK ERASE
+        // 5. 64 KB BLOCK ERASE
         // =================================================
 
         $display("--------------------------------");
-        $display("5. 32 KB BLOCK ERASE");
+        $display("5. 64 KB BLOCK ERASE");
         $display("--------------------------------");
 
-        // Address inside first 32 KB block
-        block_erase_32k(24'h000010);
+        // Address is supplied as required by the
+        // D8h command. Since our behavioral memory
+        // is exactly 64 KB, the complete memory is erased.
+
+        block_erase_64k(24'h000000);
 
 
         // =================================================
@@ -441,11 +446,9 @@ module spi_flash_tb;
         // =================================================
 
         $display("--------------------------------");
-        $display("6. STATUS DURING BLOCK ERASE");
+        $display("6. STATUS DURING 64 KB ERASE");
         $display("--------------------------------");
 
-        // Make sure we check before the 300 ns
-        // simulated erase time expires.
         #1;
 
         read_status(status_during_erase);
@@ -463,10 +466,10 @@ module spi_flash_tb;
         // =================================================
 
         $display("--------------------------------");
-        $display("7. WAIT FOR BLOCK ERASE");
+        $display("7. WAIT FOR 64 KB ERASE");
         $display("--------------------------------");
 
-        #250;
+        #350;
 
 
         // =================================================
@@ -474,7 +477,7 @@ module spi_flash_tb;
         // =================================================
 
         $display("--------------------------------");
-        $display("8. STATUS AFTER BLOCK ERASE");
+        $display("8. STATUS AFTER 64 KB ERASE");
         $display("--------------------------------");
 
         read_status(status_after_erase);
@@ -488,11 +491,11 @@ module spi_flash_tb;
 
 
         // =================================================
-        // 9. VERIFY FIRST BLOCK WAS ERASED
+        // 9. VERIFY START OF MEMORY ERASED
         // =================================================
 
         $display("--------------------------------");
-        $display("9. VERIFY FIRST BLOCK ERASED");
+        $display("9. VERIFY START OF MEMORY ERASED");
         $display("--------------------------------");
 
         read_data(
@@ -504,7 +507,7 @@ module spi_flash_tb;
         );
 
         $display(
-            "First Block = %h %h %h %h",
+            "Start = %h %h %h %h",
             read_data_1,
             read_data_2,
             read_data_3,
@@ -516,22 +519,22 @@ module spi_flash_tb;
             (read_data_3 == 8'hFF) &&
             (read_data_4 == 8'hFF))
 
-            $display("PASS: First 32 KB block successfully erased");
+            $display("PASS: Start of memory erased");
 
         else
-            $display("FAIL: First 32 KB block was not erased");
+            $display("FAIL: Start of memory not erased");
 
 
         // =================================================
-        // 10. VERIFY SECOND BLOCK WAS NOT ERASED
+        // 10. VERIFY END OF MEMORY ERASED
         // =================================================
 
         $display("--------------------------------");
-        $display("10. VERIFY SECOND BLOCK");
+        $display("10. VERIFY END OF MEMORY ERASED");
         $display("--------------------------------");
 
         read_data(
-            24'h008010,
+            24'h00FFF0,
             read_data_1,
             read_data_2,
             read_data_3,
@@ -539,22 +542,22 @@ module spi_flash_tb;
         );
 
         $display(
-            "Second Block = %h %h %h %h",
+            "End = %h %h %h %h",
             read_data_1,
             read_data_2,
             read_data_3,
             read_data_4
         );
 
-        if ((read_data_1 == 8'hAA) &&
-            (read_data_2 == 8'hBB) &&
-            (read_data_3 == 8'hCC) &&
-            (read_data_4 == 8'hDD))
+        if ((read_data_1 == 8'hFF) &&
+            (read_data_2 == 8'hFF) &&
+            (read_data_3 == 8'hFF) &&
+            (read_data_4 == 8'hFF))
 
-            $display("PASS: Second 32 KB block was NOT erased");
+            $display("PASS: End of memory erased");
 
         else
-            $display("FAIL: Second 32 KB block was modified");
+            $display("FAIL: End of memory not erased");
 
 
         // =================================================
@@ -610,23 +613,23 @@ module spi_flash_tb;
         );
 
         $display(
-            "Memory[8010] = %h",
-            uut.memory[16'h8010]
+            "Memory[FFF0] = %h",
+            uut.memory[16'hFFF0]
         );
 
         $display(
-            "Memory[8011] = %h",
-            uut.memory[16'h8011]
+            "Memory[FFF1] = %h",
+            uut.memory[16'hFFF1]
         );
 
         $display(
-            "Memory[8012] = %h",
-            uut.memory[16'h8012]
+            "Memory[FFF2] = %h",
+            uut.memory[16'hFFF2]
         );
 
         $display(
-            "Memory[8013] = %h",
-            uut.memory[16'h8013]
+            "Memory[FFF3] = %h",
+            uut.memory[16'hFFF3]
         );
 
 
@@ -635,7 +638,7 @@ module spi_flash_tb;
         // =================================================
 
         $display("--------------------------------");
-        $display("32 KB BLOCK ERASE TEST COMPLETE");
+        $display("64 KB BLOCK ERASE TEST COMPLETE");
         $display("--------------------------------");
 
         $stop;
