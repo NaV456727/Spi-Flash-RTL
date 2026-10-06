@@ -1,409 +1,644 @@
 `timescale 1ns/1ps
 
-module spi_flash_tb;
+module spi_flash (
+    input  wire cs,
+    input  wire sclk,
+    input  wire mosi,
+    output reg miso
+);
 
-    reg cs;
-    reg sclk;
-    reg mosi;
-    wire miso;
+    // ---------------------------------------
+    // SPI receive registers
+    // ---------------------------------------
 
-    // =============================================
-    // READ DATA BEFORE ERASE
-    // =============================================
+    reg [7:0] rx_shift;
+    reg [7:0] command;
+    reg [2:0] bit_count;
 
-    reg [7:0] received_data1;
-    reg [7:0] received_data2;
-    reg [7:0] received_data3;
-    reg [7:0] received_data4;
+    // ---------------------------------------
+    // JEDEC ID shift register
+    // ---------------------------------------
 
-    // =============================================
-    // READ DATA AFTER ERASE
-    // =============================================
+    reg [23:0] jedec_shift;
 
-    reg [7:0] erased_data1;
-    reg [7:0] erased_data2;
-    reg [7:0] erased_data3;
-    reg [7:0] erased_data4;
+    // ---------------------------------------
+    // Flash registers
+    // ---------------------------------------
 
-    // =============================================
-    // JEDEC ID
-    // =============================================
+    reg        wel;
+    reg        busy;
 
-    reg [7:0] jedec_manufacturer;
-    reg [7:0] jedec_memory_type;
-    reg [7:0] jedec_device_id;
+    reg [23:0] address_reg;
+    reg [1:0]  address_count;
+    reg [15:0] erase_address;
 
-    // =============================================
-    // STATUS
-    // =============================================
+    // ---------------------------------------
+    // Status / read registers
+    // ---------------------------------------
 
-    reg [7:0] received_status;
+    reg [7:0] status_shift;
+    reg [7:0] read_shift;
 
+    reg        read_pending;
+    reg [15:0] read_address;
+    reg [2:0]  read_bit_count;
 
-    // =============================================
-    // DUT
-    // =============================================
+    // ---------------------------------------
+    // Memory
+    // 64 KB behavioral memory
+    // ---------------------------------------
 
-    spi_flash uut (
-        .cs(cs),
-        .sclk(sclk),
-        .mosi(mosi),
-        .miso(miso)
-    );
+    reg [7:0] memory [0:65535];
 
+    integer i;
+    integer j;
 
-    // =============================================
-    // SEND BYTE
-    // =============================================
+    // ---------------------------------------
+    // States
+    // ---------------------------------------
 
-    task send_byte;
-        input [7:0] data;
-        integer i;
+    parameter CMD_STATE      = 3'b000;
+    parameter STATUS_STATE   = 3'b001;
+    parameter ADDRESS_STATE  = 3'b010;
+    parameter PROGRAM_STATE  = 3'b011;
+    parameter READ_STATE     = 3'b100;
+    parameter DATA_STATE     = 3'b101;
+    parameter JEDEC_STATE    = 3'b110;
 
-        begin
-
-            for (i = 7; i >= 0; i = i - 1) begin
-
-                mosi = data[i];
-
-                #5 sclk = 1;
-                #5 sclk = 0;
-
-            end
-
-        end
-
-    endtask
+    reg [2:0] state;
 
 
-    // =============================================
-    // READ BYTE
-    // =============================================
-
-    task read_byte;
-        output [7:0] data;
-        integer i;
-
-        begin
-
-            data = 8'b0;
-
-            for (i = 7; i >= 0; i = i - 1) begin
-
-                mosi = 0;
-
-                #5 sclk = 1;
-
-                #1 data[i] = miso;
-
-                #4 sclk = 0;
-
-            end
-
-        end
-
-    endtask
-
-
-    // =============================================
-    // TEST
-    // =============================================
+    // ---------------------------------------
+    // Initial values
+    // ---------------------------------------
 
     initial begin
 
-        // -----------------------------------------
-        // Initial values
-        // -----------------------------------------
+        rx_shift       = 8'b0;
+        command        = 8'b0;
+        bit_count      = 3'b0;
 
-        cs = 1;
-        sclk = 0;
-        mosi = 0;
+        wel            = 1'b0;
+        busy           = 1'b0;
 
-        received_status = 0;
+        address_reg    = 24'b0;
+        address_count  = 2'b0;
+        erase_address  = 16'b0;
 
-        received_data1 = 0;
-        received_data2 = 0;
-        received_data3 = 0;
-        received_data4 = 0;
+        status_shift   = 8'b0;
+        read_shift     = 8'b0;
 
-        erased_data1 = 0;
-        erased_data2 = 0;
-        erased_data3 = 0;
-        erased_data4 = 0;
+        jedec_shift    = 24'b0;
 
-        jedec_manufacturer = 0;
-        jedec_memory_type = 0;
-        jedec_device_id = 0;
+        read_pending   = 1'b0;
+        read_address   = 16'b0;
+        read_bit_count = 3'b0;
 
+        miso           = 1'b0;
 
-        #10;
+        state          = CMD_STATE;
 
+        // Flash starts erased
+        for (i = 0; i < 65536; i = i + 1)
+            memory[i] = 8'hFF;
 
-        // =========================================
-        // 1. WRITE ENABLE
-        // =========================================
+    end
 
-        $display("--------------------------------");
-        $display("1. WRITE ENABLE");
-        $display("--------------------------------");
 
-        cs = 0;
+    // =====================================================
+    // RECEIVE SIDE
+    // =====================================================
 
-        send_byte(8'h06);
+    always @(posedge sclk or posedge cs) begin
 
-        cs = 1;
+        // -----------------------------------------------
+        // CS HIGH = transaction finished
+        // -----------------------------------------------
 
-        #10;
+        if (cs) begin
 
+            rx_shift      <= 8'b0;
+            bit_count     <= 3'b0;
+            address_count <= 2'b0;
 
-        // =========================================
-        // 2. PAGE PROGRAM
-        //
-        // Address = 000010h
-        // Data = DE AD BE EF
-        // =========================================
+            // -------------------------------------------
+            // Page Program
+            // -------------------------------------------
 
-        $display("--------------------------------");
-        $display("2. PAGE PROGRAM");
-        $display("--------------------------------");
+            if (command == 8'h02 && wel == 1'b1) begin
 
-        cs = 0;
+                busy <= 1'b1;
 
-        send_byte(8'h02);
+            end
 
-        send_byte(8'h00);
-        send_byte(8'h00);
-        send_byte(8'h10);
 
-        send_byte(8'hDE);
-        send_byte(8'hAD);
-        send_byte(8'hBE);
-        send_byte(8'hEF);
+            // -------------------------------------------
+            // Sector Erase
+            // -------------------------------------------
 
-        cs = 1;
+            if (command == 8'h20 && wel == 1'b1) begin
 
-        #10;
+                busy <= 1'b1;
 
+            end
 
-        // =========================================
-        // 3. READ DATA BEFORE ERASE
-        //
-        // Address = 000010h
-        // Expected = DE AD BE EF
-        // =========================================
+            state <= CMD_STATE;
 
-        $display("--------------------------------");
-        $display("3. READ DATA BEFORE ERASE");
-        $display("--------------------------------");
+        end
 
-        cs = 0;
+        else begin
 
-        send_byte(8'h03);
+            // -------------------------------------------
+            // Receive one SPI bit
+            // -------------------------------------------
 
-        send_byte(8'h00);
-        send_byte(8'h00);
-        send_byte(8'h10);
+            rx_shift <= {
+                rx_shift[6:0],
+                mosi
+            };
 
-        read_byte(received_data1);
-        read_byte(received_data2);
-        read_byte(received_data3);
-        read_byte(received_data4);
 
-        cs = 1;
+            // -------------------------------------------
+            // Complete byte received
+            // -------------------------------------------
 
-        #10;
+            if (bit_count == 3'd7) begin
 
+                case (state)
 
-        // =========================================
-        // 4. WRITE ENABLE FOR ERASE
-        // =========================================
+                    // ===================================
+                    // COMMAND
+                    // ===================================
 
-        $display("--------------------------------");
-        $display("4. WRITE ENABLE FOR ERASE");
-        $display("--------------------------------");
+                    CMD_STATE: begin
 
-        cs = 0;
+                        command <= {
+                            rx_shift[6:0],
+                            mosi
+                        };
 
-        send_byte(8'h06);
+                        case ({
+                            rx_shift[6:0],
+                            mosi
+                        })
 
-        cs = 1;
+                            // -----------------------------
+                            // Write Enable
+                            // -----------------------------
 
-        #10;
+                            8'h06: begin
 
+                                if (busy == 1'b0) begin
 
-        // =========================================
-        // 5. SECTOR ERASE
-        //
-        // Command = 20h
-        // Address = 000010h
-        //
-        // This erases the 4 KB sector containing
-        // address 000010h.
-        // =========================================
+                                    wel   <= 1'b1;
+                                    state <= DATA_STATE;
 
-        $display("--------------------------------");
-        $display("5. SECTOR ERASE");
-        $display("--------------------------------");
+                                end
+                                else begin
 
-        cs = 0;
+                                    state <= DATA_STATE;
 
-        send_byte(8'h20);
+                                end
 
-        send_byte(8'h00);
-        send_byte(8'h00);
-        send_byte(8'h10);
+                            end
 
-        cs = 1;
 
-        #10;
+                            // -----------------------------
+                            // Write Disable
+                            // -----------------------------
 
+                            8'h04: begin
 
-        // =========================================
-        // 6. READ DATA AFTER ERASE
-        //
-        // Address = 000010h
-        // Expected = FF FF FF FF
-        // =========================================
+                                if (busy == 1'b0) begin
 
-        $display("--------------------------------");
-        $display("6. READ DATA AFTER ERASE");
-        $display("--------------------------------");
+                                    wel   <= 1'b0;
+                                    state <= DATA_STATE;
 
-        cs = 0;
+                                end
+                                else begin
 
-        send_byte(8'h03);
+                                    state <= DATA_STATE;
 
-        send_byte(8'h00);
-        send_byte(8'h00);
-        send_byte(8'h10);
+                                end
 
-        read_byte(erased_data1);
-        read_byte(erased_data2);
-        read_byte(erased_data3);
-        read_byte(erased_data4);
+                            end
 
-        cs = 1;
 
-        #10;
+                            // -----------------------------
+                            // Read Status Register
+                            // -----------------------------
 
+                            8'h05: begin
 
-        // =========================================
-        // 7. READ JEDEC ID
-        //
-        // Expected:
-        // Manufacturer ID = EF
-        // Memory Type     = 40
-        // Device ID       = 17
-        // =========================================
+                                status_shift <= {
+                                    6'b000000,
+                                    wel,
+                                    busy
+                                };
 
-        $display("--------------------------------");
-        $display("7. READ JEDEC ID");
-        $display("--------------------------------");
+                                state <= STATUS_STATE;
 
-        cs = 0;
+                            end
 
-        send_byte(8'h9F);
 
-        read_byte(jedec_manufacturer);
-        read_byte(jedec_memory_type);
-        read_byte(jedec_device_id);
+                            // -----------------------------
+                            // JEDEC ID
+                            // -----------------------------
 
-        cs = 1;
+                            8'h9F: begin
 
-        #10;
+                                if (busy == 1'b0) begin
 
+                                    jedec_shift <= 24'hEF4017;
+                                    state       <= JEDEC_STATE;
 
-        // =========================================
-        // DISPLAY JEDEC ID
-        // =========================================
+                                end
+                                else begin
 
-        $display("--------------------------------");
-        $display("JEDEC ID TEST");
-        $display("--------------------------------");
+                                    state <= DATA_STATE;
 
-        $display("Manufacturer ID = %h",
-                 jedec_manufacturer);
+                                end
 
-        $display("Memory Type     = %h",
-                 jedec_memory_type);
+                            end
 
-        $display("Device ID       = %h",
-                 jedec_device_id);
 
-        $display("--------------------------------");
+                            // -----------------------------
+                            // Page Program
+                            // -----------------------------
 
+                            8'h02: begin
 
-        // =========================================
-        // DISPLAY MEMORY AFTER ERASE
-        // =========================================
+                                if ((wel == 1'b1) &&
+                                    (busy == 1'b0)) begin
 
-        $display("--------------------------------");
-        $display("SPI FLASH TEST RESULTS");
-        $display("--------------------------------");
+                                    address_count <= 2'b0;
+                                    state         <= ADDRESS_STATE;
 
-        $display("Memory[0010] = %h",
-                 uut.memory[16'h0010]);
+                                end
+                                else begin
 
-        $display("Memory[0011] = %h",
-                 uut.memory[16'h0011]);
+                                    state <= DATA_STATE;
 
-        $display("Memory[0012] = %h",
-                 uut.memory[16'h0012]);
+                                end
 
-        $display("Memory[0013] = %h",
-                 uut.memory[16'h0013]);
+                            end
 
-        $display("--------------------------------");
 
+                            // -----------------------------
+                            // Read Data
+                            // -----------------------------
 
-        // =========================================
-        // DATA BEFORE ERASE
-        // =========================================
+                            8'h03: begin
 
-        $display("DATA BEFORE ERASE");
-        $display("Read Data 1 = %h",
-                 received_data1);
+                                if (busy == 1'b0) begin
 
-        $display("Read Data 2 = %h",
-                 received_data2);
+                                    address_count <= 2'b0;
+                                    state         <= ADDRESS_STATE;
 
-        $display("Read Data 3 = %h",
-                 received_data3);
+                                end
+                                else begin
 
-        $display("Read Data 4 = %h",
-                 received_data4);
+                                    state <= DATA_STATE;
 
-        $display("--------------------------------");
+                                end
 
+                            end
 
-        // =========================================
-        // DATA AFTER ERASE
-        // =========================================
 
-        $display("DATA AFTER ERASE");
-        $display("Read Data 1 = %h",
-                 erased_data1);
+                            // -----------------------------
+                            // Sector Erase
+                            // -----------------------------
 
-        $display("Read Data 2 = %h",
-                 erased_data2);
+                            8'h20: begin
 
-        $display("Read Data 3 = %h",
-                 erased_data3);
+                                if ((wel == 1'b1) &&
+                                    (busy == 1'b0)) begin
 
-        $display("Read Data 4 = %h",
-                 erased_data4);
+                                    address_count <= 2'b0;
+                                    state         <= ADDRESS_STATE;
 
-        $display("--------------------------------");
+                                end
+                                else begin
 
+                                    state <= DATA_STATE;
 
-        // =========================================
-        // FINAL TEST SUMMARY
-        // =========================================
+                                end
 
-        $display("SPI FLASH TEST COMPLETE");
-        $display("--------------------------------");
+                            end
 
-        $stop;
+
+                            // -----------------------------
+                            // Unsupported command
+                            // -----------------------------
+
+                            default: begin
+
+                                state <= DATA_STATE;
+
+                            end
+
+                        endcase
+
+                    end
+
+
+                    // ===================================
+                    // ADDRESS
+                    // ===================================
+
+                    ADDRESS_STATE: begin
+
+                        address_reg <= {
+                            address_reg[15:0],
+                            rx_shift[6:0],
+                            mosi
+                        };
+
+
+                        if (address_count == 2'd2) begin
+
+                            address_count <= 2'b0;
+
+
+                            // -----------------------------
+                            // Page Program
+                            // -----------------------------
+
+                            if (command == 8'h02) begin
+
+                                state <= PROGRAM_STATE;
+
+                            end
+
+
+                            // -----------------------------
+                            // Read Data
+                            // -----------------------------
+
+                            else if (command == 8'h03) begin
+
+                                read_address <= {
+                                    address_reg[7:0],
+                                    rx_shift[6:0],
+                                    mosi
+                                };
+
+                                read_pending   <= 1'b1;
+                                read_bit_count <= 3'b0;
+
+                                state <= READ_STATE;
+
+                            end
+
+
+                            // -----------------------------
+                            // Sector Erase
+                            // -----------------------------
+
+                            else if (command == 8'h20) begin
+
+                                erase_address <= {
+                                    address_reg[7:0],
+                                    rx_shift[6:0],
+                                    mosi
+                                };
+
+                            end
+
+                        end
+
+                        else begin
+
+                            address_count <=
+                                address_count + 1'b1;
+
+                        end
+
+                    end
+
+
+                    // ===================================
+                    // PAGE PROGRAM DATA
+                    // ===================================
+
+                    PROGRAM_STATE: begin
+
+                        if ((wel == 1'b1) &&
+                            (busy == 1'b0)) begin
+
+                            // Flash programming changes
+                            // bits from 1 -> 0 only.
+
+                            memory[address_reg[15:0]] <=
+                                memory[address_reg[15:0]]
+                                &
+                                {
+                                    rx_shift[6:0],
+                                    mosi
+                                };
+
+                            address_reg <=
+                                address_reg + 1'b1;
+
+                        end
+
+                    end
+
+
+                    // ===================================
+                    // OTHER STATES
+                    // ===================================
+
+                    default: begin
+
+                    end
+
+                endcase
+
+
+                bit_count <= 3'b0;
+
+            end
+
+            else begin
+
+                bit_count <=
+                    bit_count + 1'b1;
+
+            end
+
+        end
+
+    end
+
+
+    // =====================================================
+    // BEHAVIORAL BUSY COMPLETION
+    // =====================================================
+    //
+    // These blocks model the internal flash operation.
+    //
+    // Page Program : 100 ns
+    // Sector Erase : 200 ns
+    //
+    // These values are simulation values and are not
+    // intended to represent exact physical timing.
+    // =====================================================
+
+    always begin
+
+        if (busy == 1'b1) begin
+
+            if (command == 8'h02) begin
+
+                #100;
+
+                busy = 1'b0;
+                wel  = 1'b0;
+
+            end
+
+            else if (command == 8'h20) begin
+
+                #200;
+
+                // Erase 4 KB sector
+                for (j = 0; j < 4096; j = j + 1) begin
+
+                    memory[(erase_address & 16'hF000) + j]
+                        = 8'hFF;
+
+                end
+
+                busy = 1'b0;
+                wel  = 1'b0;
+
+            end
+
+        end
+
+        else begin
+
+            #1;
+
+        end
+
+    end
+
+
+    // =====================================================
+    // TRANSMIT SIDE
+    // =====================================================
+
+    always @(negedge sclk or posedge cs) begin
+
+        if (cs) begin
+
+            miso <= 1'b0;
+
+            read_pending   <= 1'b0;
+            read_bit_count <= 3'b0;
+
+        end
+
+        else begin
+
+            // -------------------------------------------
+            // Status Register output
+            // -------------------------------------------
+
+            if (state == STATUS_STATE) begin
+
+                miso <= status_shift[7];
+
+                status_shift <= {
+                    status_shift[6:0],
+                    1'b0
+                };
+
+            end
+
+
+            // -------------------------------------------
+            // JEDEC ID output
+            // -------------------------------------------
+
+            else if (state == JEDEC_STATE) begin
+
+                miso <= jedec_shift[23];
+
+                jedec_shift <= {
+                    jedec_shift[22:0],
+                    1'b0
+                };
+
+            end
+
+
+            // -------------------------------------------
+            // Flash Read output
+            // -------------------------------------------
+
+            else if (state == READ_STATE) begin
+
+                if (read_pending) begin
+
+                    miso <= memory[read_address][7];
+
+                    read_shift <= {
+                        memory[read_address][6:0],
+                        1'b0
+                    };
+
+                    read_pending   <= 1'b0;
+                    read_bit_count <= 3'd1;
+
+                end
+
+                else begin
+
+                    miso <= read_shift[7];
+
+                    read_shift <= {
+                        read_shift[6:0],
+                        1'b0
+                    };
+
+
+                    if (read_bit_count == 3'd7) begin
+
+                        read_address <=
+                            read_address + 1'b1;
+
+                        read_bit_count <= 3'b0;
+
+                        read_pending <= 1'b1;
+
+                    end
+
+                    else begin
+
+                        read_bit_count <=
+                            read_bit_count + 1'b1;
+
+                    end
+
+                end
+
+            end
+
+
+            // -------------------------------------------
+            // No data to transmit
+            // -------------------------------------------
+
+            else begin
+
+                miso <= 1'b0;
+
+            end
+
+        end
 
     end
 

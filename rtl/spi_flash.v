@@ -1,8 +1,10 @@
+`timescale 1ns/1ps
+
 module spi_flash (
     input  wire cs,
     input  wire sclk,
     input  wire mosi,
-    output reg  miso
+    output reg miso
 );
 
     // ---------------------------------------
@@ -23,8 +25,8 @@ module spi_flash (
     // Flash registers
     // ---------------------------------------
 
-    reg       wel;
-    reg       busy;
+    reg        wel;
+    reg        busy;
 
     reg [23:0] address_reg;
     reg [1:0]  address_count;
@@ -37,9 +39,9 @@ module spi_flash (
     reg [7:0] status_shift;
     reg [7:0] read_shift;
 
-    reg       read_pending;
+    reg        read_pending;
     reg [15:0] read_address;
-    reg [2:0] read_bit_count;
+    reg [2:0]  read_bit_count;
 
     // ---------------------------------------
     // Memory
@@ -64,6 +66,7 @@ module spi_flash (
     parameter JEDEC_STATE    = 3'b110;
 
     reg [2:0] state;
+
 
     // ---------------------------------------
     // Initial values
@@ -119,33 +122,23 @@ module spi_flash (
             address_count <= 2'b0;
 
             // -------------------------------------------
-            // Complete Sector Erase
-            // -------------------------------------------
-
-            if (command == 8'h20 && wel == 1'b1) begin
-
-                // Erase the 4 KB sector containing
-                // the specified address.
-                for (j = 0; j < 4096; j = j + 1) begin
-
-                    memory[(erase_address & 16'hF000) + j]
-                        <= 8'hFF;
-
-                end
-
-                wel  <= 1'b0;
-                busy <= 1'b0;
-
-            end
-
-            // -------------------------------------------
-            // Simplified Page Program completion
+            // Page Program
             // -------------------------------------------
 
             if (command == 8'h02 && wel == 1'b1) begin
 
-                wel  <= 1'b0;
-                busy <= 1'b0;
+                busy <= 1'b1;
+
+            end
+
+
+            // -------------------------------------------
+            // Sector Erase
+            // -------------------------------------------
+
+            if (command == 8'h20 && wel == 1'b1) begin
+
+                busy <= 1'b1;
 
             end
 
@@ -195,8 +188,17 @@ module spi_flash (
 
                             8'h06: begin
 
-                                wel   <= 1'b1;
-                                state <= DATA_STATE;
+                                if (busy == 1'b0) begin
+
+                                    wel   <= 1'b1;
+                                    state <= DATA_STATE;
+
+                                end
+                                else begin
+
+                                    state <= DATA_STATE;
+
+                                end
 
                             end
 
@@ -207,14 +209,23 @@ module spi_flash (
 
                             8'h04: begin
 
-                                wel   <= 1'b0;
-                                state <= DATA_STATE;
+                                if (busy == 1'b0) begin
+
+                                    wel   <= 1'b0;
+                                    state <= DATA_STATE;
+
+                                end
+                                else begin
+
+                                    state <= DATA_STATE;
+
+                                end
 
                             end
 
 
                             // -----------------------------
-                            // Read Status Register-1
+                            // Read Status Register
                             // -----------------------------
 
                             8'h05: begin
@@ -236,8 +247,17 @@ module spi_flash (
 
                             8'h9F: begin
 
-                                jedec_shift <= 24'hEF4017;
-                                state       <= JEDEC_STATE;
+                                if (busy == 1'b0) begin
+
+                                    jedec_shift <= 24'hEF4017;
+                                    state       <= JEDEC_STATE;
+
+                                end
+                                else begin
+
+                                    state <= DATA_STATE;
+
+                                end
 
                             end
 
@@ -248,13 +268,13 @@ module spi_flash (
 
                             8'h02: begin
 
-                                if (wel == 1'b1) begin
+                                if ((wel == 1'b1) &&
+                                    (busy == 1'b0)) begin
 
                                     address_count <= 2'b0;
                                     state         <= ADDRESS_STATE;
 
                                 end
-
                                 else begin
 
                                     state <= DATA_STATE;
@@ -270,8 +290,17 @@ module spi_flash (
 
                             8'h03: begin
 
-                                address_count <= 2'b0;
-                                state         <= ADDRESS_STATE;
+                                if (busy == 1'b0) begin
+
+                                    address_count <= 2'b0;
+                                    state         <= ADDRESS_STATE;
+
+                                end
+                                else begin
+
+                                    state <= DATA_STATE;
+
+                                end
 
                             end
 
@@ -282,13 +311,13 @@ module spi_flash (
 
                             8'h20: begin
 
-                                if (wel == 1'b1) begin
+                                if ((wel == 1'b1) &&
+                                    (busy == 1'b0)) begin
 
                                     address_count <= 2'b0;
                                     state         <= ADDRESS_STATE;
 
                                 end
-
                                 else begin
 
                                     state <= DATA_STATE;
@@ -394,7 +423,8 @@ module spi_flash (
 
                     PROGRAM_STATE: begin
 
-                        if (wel == 1'b1) begin
+                        if ((wel == 1'b1) &&
+                            (busy == 1'b0)) begin
 
                             // Flash programming changes
                             // bits from 1 -> 0 only.
@@ -416,7 +446,7 @@ module spi_flash (
 
 
                     // ===================================
-                    // Other states
+                    // OTHER STATES
                     // ===================================
 
                     default: begin
@@ -426,7 +456,6 @@ module spi_flash (
                 endcase
 
 
-                // Reset bit counter after byte
                 bit_count <= 3'b0;
 
             end
@@ -437,6 +466,60 @@ module spi_flash (
                     bit_count + 1'b1;
 
             end
+
+        end
+
+    end
+
+
+    // =====================================================
+    // BEHAVIORAL BUSY COMPLETION
+    // =====================================================
+    //
+    // These blocks model the internal flash operation.
+    //
+    // Page Program : 100 ns
+    // Sector Erase : 200 ns
+    //
+    // These values are simulation values and are not
+    // intended to represent exact physical timing.
+    // =====================================================
+
+    always begin
+
+        if (busy == 1'b1) begin
+
+            if (command == 8'h02) begin
+
+                #100;
+
+                busy = 1'b0;
+                wel  = 1'b0;
+
+            end
+
+            else if (command == 8'h20) begin
+
+                #200;
+
+                // Erase 4 KB sector
+                for (j = 0; j < 4096; j = j + 1) begin
+
+                    memory[(erase_address & 16'hF000) + j]
+                        = 8'hFF;
+
+                end
+
+                busy = 1'b0;
+                wel  = 1'b0;
+
+            end
+
+        end
+
+        else begin
+
+            #1;
 
         end
 
@@ -498,13 +581,10 @@ module spi_flash (
 
             else if (state == READ_STATE) begin
 
-                // Load first bit of a new byte
                 if (read_pending) begin
 
                     miso <= memory[read_address][7];
 
-                    // Shift immediately so the next
-                    // falling edge outputs the next bit.
                     read_shift <= {
                         memory[read_address][6:0],
                         1'b0
@@ -517,10 +597,8 @@ module spi_flash (
 
                 else begin
 
-                    // Output next bit
                     miso <= read_shift[7];
 
-                    // Shift to next bit
                     read_shift <= {
                         read_shift[6:0],
                         1'b0
@@ -529,14 +607,11 @@ module spi_flash (
 
                     if (read_bit_count == 3'd7) begin
 
-                        // Finished current byte
                         read_address <=
                             read_address + 1'b1;
 
                         read_bit_count <= 3'b0;
 
-                        // Next falling edge will load
-                        // the next byte.
                         read_pending <= 1'b1;
 
                     end
