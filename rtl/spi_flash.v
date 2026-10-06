@@ -142,9 +142,21 @@ module spi_flash (
 
             end
 
+
+            // -------------------------------------------
+            // 32 KB Block Erase
+            // -------------------------------------------
+
+            if (command == 8'h52 && wel == 1'b1) begin
+
+                busy <= 1'b1;
+
+            end
+
             state <= CMD_STATE;
 
         end
+
 
         else begin
 
@@ -328,6 +340,28 @@ module spi_flash (
 
 
                             // -----------------------------
+                            // 32 KB Block Erase
+                            // -----------------------------
+
+                            8'h52: begin
+
+                                if ((wel == 1'b1) &&
+                                    (busy == 1'b0)) begin
+
+                                    address_count <= 2'b0;
+                                    state         <= ADDRESS_STATE;
+
+                                end
+                                else begin
+
+                                    state <= DATA_STATE;
+
+                                end
+
+                            end
+
+
+                            // -----------------------------
                             // Unsupported command
                             // -----------------------------
 
@@ -396,6 +430,21 @@ module spi_flash (
                             // -----------------------------
 
                             else if (command == 8'h20) begin
+
+                                erase_address <= {
+                                    address_reg[7:0],
+                                    rx_shift[6:0],
+                                    mosi
+                                };
+
+                            end
+
+
+                            // -----------------------------
+                            // 32 KB Block Erase
+                            // -----------------------------
+
+                            else if (command == 8'h52) begin
 
                                 erase_address <= {
                                     address_reg[7:0],
@@ -480,6 +529,7 @@ module spi_flash (
     //
     // Page Program : 100 ns
     // Sector Erase : 200 ns
+    // Block Erase  : 300 ns
     //
     // These values are simulation values and are not
     // intended to represent exact physical timing.
@@ -489,6 +539,10 @@ module spi_flash (
 
         if (busy == 1'b1) begin
 
+            // -------------------------------------------
+            // Page Program
+            // -------------------------------------------
+
             if (command == 8'h02) begin
 
                 #100;
@@ -497,6 +551,11 @@ module spi_flash (
                 wel  = 1'b0;
 
             end
+
+
+            // -------------------------------------------
+            // Sector Erase
+            // -------------------------------------------
 
             else if (command == 8'h20) begin
 
@@ -515,7 +574,30 @@ module spi_flash (
 
             end
 
+
+            // -------------------------------------------
+            // 32 KB Block Erase
+            // -------------------------------------------
+
+            else if (command == 8'h52) begin
+
+                #300;
+
+                // Erase 32 KB block
+                for (j = 0; j < 32768; j = j + 1) begin
+
+                    memory[(erase_address & 16'h8000) + j]
+                        = 8'hFF;
+
+                end
+
+                busy = 1'b0;
+                wel  = 1'b0;
+
+            end
+
         end
+
 
         else begin
 
