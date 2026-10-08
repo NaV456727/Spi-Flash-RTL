@@ -1,5 +1,21 @@
 `timescale 1ns/1ps
 
+// -------------------------------------------------------
+// SPI Flash Behavioral Model
+//
+// This model follows the command behavior of a
+// Winbond W25Q64-style SPI Flash device.
+//
+// For simulation simplicity, the memory array is
+// reduced to 64 KB instead of the full device capacity.
+//
+// Therefore:
+//   - 24-bit SPI addresses are accepted
+//   - Only the lower 16 address bits access memory
+//   - D8h erases the complete 64 KB model
+//   - C7h erases the complete 64 KB model
+// -------------------------------------------------------
+
 module spi_flash (
     input  wire cs,
     input  wire sclk,
@@ -13,6 +29,7 @@ module spi_flash (
 
     reg [7:0] rx_shift;
     reg [7:0] command;
+    reg [7:0] operation;
     reg [2:0] bit_count;
 
     // ---------------------------------------
@@ -29,7 +46,9 @@ module spi_flash (
     reg        busy;
 
     reg [23:0] address_reg;
-    reg [1:0]  address_count;
+    reg [1:0] address_count;
+
+    // Behavioral memory is 64 KB, so erase operations use the lower 16 address bits
     reg [15:0] erase_address;
 
     // ---------------------------------------
@@ -48,22 +67,38 @@ module spi_flash (
     // 64 KB behavioral memory
     // ---------------------------------------
 
+    // Simplified 64 KB behavioral memory model
     reg [7:0] memory [0:65535];
 
     integer i;
     integer j;
 
     // ---------------------------------------
+    // SPI Flash Commands
+    // ---------------------------------------
+
+    localparam CMD_WREN          = 8'h06;
+    localparam CMD_WRDI          = 8'h04;
+    localparam CMD_RDSR          = 8'h05;
+    localparam CMD_READ          = 8'h03;
+    localparam CMD_PAGE_PROGRAM  = 8'h02;
+    localparam CMD_SECTOR_ERASE  = 8'h20;
+    localparam CMD_BLOCK32_ERASE = 8'h52;
+    localparam CMD_BLOCK64_ERASE = 8'hD8;
+    localparam CMD_CHIP_ERASE    = 8'hC7;
+    localparam CMD_JEDEC_ID      = 8'h9F;
+
+    // ---------------------------------------
     // States
     // ---------------------------------------
 
-    parameter CMD_STATE      = 3'b000;
-    parameter STATUS_STATE   = 3'b001;
-    parameter ADDRESS_STATE  = 3'b010;
-    parameter PROGRAM_STATE  = 3'b011;
-    parameter READ_STATE     = 3'b100;
-    parameter DATA_STATE     = 3'b101;
-    parameter JEDEC_STATE    = 3'b110;
+    localparam CMD_STATE      = 3'b000;
+    localparam STATUS_STATE   = 3'b001;
+    localparam ADDRESS_STATE  = 3'b010;
+    localparam PROGRAM_STATE  = 3'b011;
+    localparam READ_STATE     = 3'b100;
+    localparam DATA_STATE     = 3'b101;
+    localparam JEDEC_STATE    = 3'b110;
 
     reg [2:0] state;
 
@@ -76,6 +111,7 @@ module spi_flash (
 
         rx_shift       = 8'b0;
         command        = 8'b0;
+        operation      = 8'b0;
         bit_count      = 3'b0;
 
         wel            = 1'b0;
@@ -117,67 +153,38 @@ module spi_flash (
 
         if (cs) begin
 
-            rx_shift      <= 8'b0;
-            bit_count     <= 3'b0;
-            address_count <= 2'b0;
+        rx_shift      <= 8'b0;
+        bit_count     <= 3'b0;
+        address_count <= 2'b0;
 
-            // -------------------------------------------
-            // Page Program
-            // -------------------------------------------
+        // -------------------------------------------
+        // Start write / erase operation
+        // -------------------------------------------
 
-            if (command == 8'h02 && wel == 1'b1) begin
+        case (command)
 
+        CMD_PAGE_PROGRAM,
+        CMD_SECTOR_ERASE,
+        CMD_BLOCK32_ERASE,
+        CMD_BLOCK64_ERASE,
+        CMD_CHIP_ERASE: begin
+
+            if (wel == 1'b1) begin
+                operation <= command;
                 busy <= 1'b1;
-
             end
-
-
-            // -------------------------------------------
-            // Sector Erase
-            // -------------------------------------------
-
-            if (command == 8'h20 && wel == 1'b1) begin
-
-                busy <= 1'b1;
-
-            end
-
-
-            // -------------------------------------------
-            // 32 KB Block Erase
-            // -------------------------------------------
-
-            if (command == 8'h52 && wel == 1'b1) begin
-
-                busy <= 1'b1;
-
-            end
-
-
-            // -------------------------------------------
-            // 64 KB Block Erase
-            // -------------------------------------------
-
-            if (command == 8'hD8 && wel == 1'b1) begin
-
-                busy <= 1'b1;
-
-            end
-
-
-            // -------------------------------------------
-            // Chip Erase
-            // -------------------------------------------
-
-            if (command == 8'hC7 && wel == 1'b1) begin
-
-                busy <= 1'b1;
-
-            end
-
-            state <= CMD_STATE;
 
         end
+
+        default: begin
+            // No write or erase operation
+        end
+
+    endcase
+
+        state <= CMD_STATE;
+
+    end
 
 
         else begin
@@ -220,19 +227,12 @@ module spi_flash (
                             // Write Enable
                             // -----------------------------
 
-                            8'h06: begin
+                           CMD_WREN: begin
 
-                                if (busy == 1'b0) begin
+                                if (busy == 1'b0)
+                                    wel <= 1'b1;
 
-                                    wel   <= 1'b1;
-                                    state <= DATA_STATE;
-
-                                end
-                                else begin
-
-                                    state <= DATA_STATE;
-
-                                end
+                                state <= DATA_STATE;
 
                             end
 
@@ -241,28 +241,20 @@ module spi_flash (
                             // Write Disable
                             // -----------------------------
 
-                            8'h04: begin
+                           CMD_WRDI: begin
 
-                                if (busy == 1'b0) begin
+                                if (busy == 1'b0)
+                                    wel <= 1'b0;
 
-                                    wel   <= 1'b0;
-                                    state <= DATA_STATE;
-
-                                end
-                                else begin
-
-                                    state <= DATA_STATE;
-
-                                end
+                                state <= DATA_STATE;
 
                             end
-
 
                             // -----------------------------
                             // Read Status Register
                             // -----------------------------
 
-                            8'h05: begin
+                           CMD_RDSR: begin
 
                                 status_shift <= {
                                     6'b000000,
@@ -279,7 +271,7 @@ module spi_flash (
                             // JEDEC ID
                             // -----------------------------
 
-                            8'h9F: begin
+                           CMD_JEDEC_ID: begin
 
                                 if (busy == 1'b0) begin
 
@@ -296,19 +288,22 @@ module spi_flash (
                             end
 
 
-                            // -----------------------------
-                            // Page Program
-                            // -----------------------------
+                            // -------------------------------------------
+                            // Page Program / Erase Commands
+                            // -------------------------------------------
 
-                            8'h02: begin
+                            CMD_PAGE_PROGRAM,
+                            CMD_SECTOR_ERASE,
+                            CMD_BLOCK32_ERASE,
+                            CMD_BLOCK64_ERASE: begin
 
-                                if ((wel == 1'b1) &&
-                                    (busy == 1'b0)) begin
+                                if ((wel == 1'b1) && (busy == 1'b0)) begin
 
                                     address_count <= 2'b0;
-                                    state         <= ADDRESS_STATE;
+                                    state <= ADDRESS_STATE;
 
                                 end
+
                                 else begin
 
                                     state <= DATA_STATE;
@@ -319,10 +314,20 @@ module spi_flash (
 
 
                             // -----------------------------
+                            // Chip Erase
+                            // -----------------------------
+
+                           CMD_CHIP_ERASE: begin
+
+                                state <= DATA_STATE;
+
+                            end
+
+                            // -----------------------------
                             // Read Data
                             // -----------------------------
 
-                            8'h03: begin
+                           CMD_READ: begin
 
                                 if (busy == 1'b0) begin
 
@@ -337,94 +342,6 @@ module spi_flash (
                                 end
 
                             end
-
-
-                            // -----------------------------
-                            // Sector Erase
-                            // -----------------------------
-
-                            8'h20: begin
-
-                                if ((wel == 1'b1) &&
-                                    (busy == 1'b0)) begin
-
-                                    address_count <= 2'b0;
-                                    state         <= ADDRESS_STATE;
-
-                                end
-                                else begin
-
-                                    state <= DATA_STATE;
-
-                                end
-
-                            end
-
-
-                            // -----------------------------
-                            // 32 KB Block Erase
-                            // -----------------------------
-
-                            8'h52: begin
-
-                                if ((wel == 1'b1) &&
-                                    (busy == 1'b0)) begin
-
-                                    address_count <= 2'b0;
-                                    state         <= ADDRESS_STATE;
-
-                                end
-                                else begin
-
-                                    state <= DATA_STATE;
-
-                                end
-
-                            end
-
-
-                            // -----------------------------
-                            // 64 KB Block Erase
-                            // -----------------------------
-
-                            8'hD8: begin
-
-                                if ((wel == 1'b1) &&
-                                    (busy == 1'b0)) begin
-
-                                    address_count <= 2'b0;
-                                    state         <= ADDRESS_STATE;
-
-                                end
-                                else begin
-
-                                    state <= DATA_STATE;
-
-                                end
-
-                            end
-
-
-                            // -----------------------------
-                            // Chip Erase
-                            // -----------------------------
-
-                            8'hC7: begin
-
-                                if ((wel == 1'b1) &&
-                                    (busy == 1'b0)) begin
-
-                                    state <= DATA_STATE;
-
-                                end
-                                else begin
-
-                                    state <= DATA_STATE;
-
-                                end
-
-                            end
-
 
                             // -----------------------------
                             // Unsupported command
@@ -463,7 +380,7 @@ module spi_flash (
                             // Page Program
                             // -----------------------------
 
-                            if (command == 8'h02) begin
+                            if (command == CMD_PAGE_PROGRAM) begin
 
                                 state <= PROGRAM_STATE;
 
@@ -474,8 +391,9 @@ module spi_flash (
                             // Read Data
                             // -----------------------------
 
-                            else if (command == 8'h03) begin
+                            else if (command == CMD_READ) begin
 
+                                // Store lower 16 bits for the 64 KB behavioral memory    
                                 read_address <= {
                                     address_reg[7:0],
                                     rx_shift[6:0],
@@ -490,42 +408,15 @@ module spi_flash (
                             end
 
 
-                            // -----------------------------
-                            // Sector Erase
-                            // -----------------------------
+                            // -------------------------------------------
+                            // Erase Address
+                            // -------------------------------------------
 
-                            else if (command == 8'h20) begin
+                            else if ((command == CMD_SECTOR_ERASE) ||
+                                    (command == CMD_BLOCK32_ERASE) ||
+                                    (command == CMD_BLOCK64_ERASE)) begin
 
-                                erase_address <= {
-                                    address_reg[7:0],
-                                    rx_shift[6:0],
-                                    mosi
-                                };
-
-                            end
-
-
-                            // -----------------------------
-                            // 32 KB Block Erase
-                            // -----------------------------
-
-                            else if (command == 8'h52) begin
-
-                                erase_address <= {
-                                    address_reg[7:0],
-                                    rx_shift[6:0],
-                                    mosi
-                                };
-
-                            end
-
-
-                            // -----------------------------
-                            // 64 KB Block Erase
-                            // -----------------------------
-
-                            else if (command == 8'hD8) begin
-
+                                // Store lower 16 bits for the 64 KB behavioral memory
                                 erase_address <= {
                                     address_reg[7:0],
                                     rx_shift[6:0],
@@ -558,6 +449,7 @@ module spi_flash (
                             // Flash programming changes
                             // bits from 1 -> 0 only.
 
+                            // Use lower 16 bits because the behavioral memory is 64 KB
                             memory[address_reg[15:0]] <=
                                 memory[address_reg[15:0]]
                                 &
@@ -619,113 +511,108 @@ module spi_flash (
 
     always begin
 
-        if (busy == 1'b1) begin
-
-            // -------------------------------------------
-            // Page Program
-            // -------------------------------------------
-
-            if (command == 8'h02) begin
-
-                #100;
-
-                busy = 1'b0;
-                wel  = 1'b0;
-
-            end
+        // Wait until a write or erase operation starts
+        wait (busy == 1'b1);
 
 
-            // -------------------------------------------
-            // Sector Erase
-            // -------------------------------------------
+        // -------------------------------------------
+        // Page Program
+        // -------------------------------------------
 
-            else if (command == 8'h20) begin
+        if (operation == CMD_PAGE_PROGRAM) begin
 
-                #200;
+            #100;
 
-                // Erase 4 KB sector
-                for (j = 0; j < 4096; j = j + 1) begin
-
-                    memory[(erase_address & 16'hF000) + j]
-                        = 8'hFF;
-
-                end
-
-                busy = 1'b0;
-                wel  = 1'b0;
-
-            end
-
-
-            // -------------------------------------------
-            // 32 KB Block Erase
-            // -------------------------------------------
-
-            else if (command == 8'h52) begin
-
-                #300;
-
-                // Erase 32 KB block
-                for (j = 0; j < 32768; j = j + 1) begin
-
-                    memory[(erase_address & 16'h8000) + j]
-                        = 8'hFF;
-
-                end
-
-                busy = 1'b0;
-                wel  = 1'b0;
-
-            end
-
-
-            // -------------------------------------------
-            // 64 KB Block Erase
-            // -------------------------------------------
-
-            else if (command == 8'hD8) begin
-
-                #400;
-
-                // Erase entire 64 KB behavioral memory
-                for (j = 0; j < 65536; j = j + 1) begin
-
-                    memory[j] = 8'hFF;
-
-                end
-
-                busy = 1'b0;
-                wel  = 1'b0;
-
-            end
-
-
-            // -------------------------------------------
-            // Chip Erase
-            // -------------------------------------------
-
-            else if (command == 8'hC7) begin
-
-                #500;
-
-                // Erase entire 64 KB behavioral memory
-                for (j = 0; j < 65536; j = j + 1) begin
-
-                    memory[j] = 8'hFF;
-
-                end
-
-                busy = 1'b0;
-                wel  = 1'b0;
-
-            end
+            busy <= 1'b0;
+            wel  <= 1'b0;
 
         end
 
 
-        else begin
+        // -------------------------------------------
+        // Sector Erase
+        // -------------------------------------------
 
-            #1;
+        else if (operation == CMD_SECTOR_ERASE) begin
+
+            #200;
+
+            // 4 KB sector alignment: clear lower 12 address bits
+            for (j = 0; j < 4096; j = j + 1) begin
+
+                memory[(erase_address & 16'hF000) + j]
+                    = 8'hFF;
+
+            end
+
+            busy <= 1'b0;
+            wel  <= 1'b0;
+
+        end
+
+
+        // -------------------------------------------
+        // 32 KB Block Erase
+        // -------------------------------------------
+
+        else if (operation == CMD_BLOCK32_ERASE) begin
+
+            #300;
+
+            // 32 KB block alignment: clear lower 15 address bits
+            for (j = 0; j < 32768; j = j + 1) begin
+
+                memory[(erase_address & 16'h8000) + j]
+                    = 8'hFF;
+
+            end
+
+            busy <= 1'b0;
+            wel  <= 1'b0;
+
+        end
+
+
+        // -------------------------------------------
+        // 64 KB Block Erase
+        // -------------------------------------------
+
+        else if (operation == CMD_BLOCK64_ERASE) begin
+
+            // In the 64 KB model, this covers the complete memory
+
+            #400;
+
+            for (j = 0; j < 65536; j = j + 1) begin
+
+                memory[j] = 8'hFF;
+
+            end
+
+            busy <= 1'b0;
+            wel  <= 1'b0;
+
+        end
+
+
+        // -------------------------------------------
+        // Chip Erase
+        // -------------------------------------------
+
+        else if (operation == CMD_CHIP_ERASE) begin
+
+            // Chip erase also clears the complete modeled memory
+
+            #500;
+
+            for (j = 0; j < 65536; j = j + 1) begin
+
+                memory[j] = 8'hFF;
+
+            end
+
+            busy <= 1'b0;
+            wel  <= 1'b0;
 
         end
 
@@ -737,14 +624,8 @@ module spi_flash (
     // =====================================================
 
     always @(negedge sclk or posedge cs) begin
-
         if (cs) begin
-
             miso <= 1'b0;
-
-            read_pending   <= 1'b0;
-            read_bit_count <= 3'b0;
-
         end
 
         else begin
